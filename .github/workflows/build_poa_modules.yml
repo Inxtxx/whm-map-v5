@@ -1,0 +1,56 @@
+name: Build POA modules (v5)
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare folders
+        run: |
+          mkdir -p data/modules lib
+          echo > .nojekyll
+
+      - name: Download POA (15% simplified) and local libs
+        run: |
+          curl -L https://raw.githubusercontent.com/Offbeatmammal/AU_Postcode_Map/main/POA_2021_AUST_GDA2020_15percent.json -o /tmp/poa.json
+          curl -L https://raw.githubusercontent.com/Leaflet/Leaflet/v1.9.4/dist/leaflet.css -o lib/leaflet.css
+          curl -L https://raw.githubusercontent.com/Leaflet/Leaflet/v1.9.4/dist/leaflet.js -o lib/leaflet.js
+          curl -L https://raw.githubusercontent.com/nodeca/pako/v2.1.0/dist/pako.min.js -o lib/pako.min.js
+
+      - name: Split by state and emit Base64-gz modules
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const zlib=require('zlib');
+          const poa=JSON.parse(fs.readFileSync('/tmp/poa.json','utf8'));
+          const groups={NSW:[],VIC:[],QLD:[],SA:[],WA:[],TAS:[],NT:[]};
+          for(const f of poa.features){
+            const p=f.properties||{};
+            let c=(p.POA_CODE21||p.poa_code_2021||p.postcode||p.code||'').toString().padStart(4,'0');
+            let st='NT';
+            switch(c[0]){case '2': st='NSW'; break; case '3': st='VIC'; break; case '4': st='QLD'; break; case '5': st='SA'; break; case '6': st='WA'; break; case '7': st='TAS'; break; case '0': case '8': case '9': st='NT'; break;}
+            groups[st].push(f);
+          }
+          fs.mkdirSync('data/modules',{recursive:true});
+          for(const [st,arr] of Object.entries(groups)){
+            const geo=JSON.stringify({type:'FeatureCollection',features:arr});
+            const b64=zlib.gzipSync(Buffer.from(geo,'utf8')).toString('base64');
+            const mod=`// auto-generated\nexport const b64='${b64}';\n`;
+            fs.writeFileSync(`data/modules/poa-${st}.mjs`, mod);
+          }
+          console.log('Shards:', Object.fromEntries(Object.entries(groups).map(([k,v])=>[k,v.length])));
+          NODE
+
+      - name: Commit modules and libs
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add data/modules/*.mjs lib/leaflet.css lib/leaflet.js lib/pako.min.js .nojekyll
+          git commit -m "Add POA state Base64 modules and local libs" || echo "Nothing to commit"
+          git push
