@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>WHM 462 集签地图 · v5（自托管·按州模块）</title>
+<title>WHM 462 集签地图 · v5.1（自托管·JSON模块）</title>
 
 <link id="lf-css" rel="stylesheet" href="lib/leaflet.css">
 <style>
@@ -28,7 +28,7 @@
 </head>
 <body>
 <div id="map"></div>
-<div class="badge" id="badge">状态：初始化（v5，自托管模块）</div>
+<div class="badge" id="badge">状态：初始化（v5.1·JSON模块）</div>
 
 <!-- 图例 -->
 <div class="legend">
@@ -50,75 +50,36 @@
   <div class="note">岗位来源：Workforce Australia（官方）。仅统计近10天，并按 462 行业口径筛选。</div>
 </div>
 
-<!-- 首次引导（当本地库/模块不存在时显示） -->
+<!-- 首次引导 -->
 <div class="overlay" id="help">
-  <h2>第一次使用 v5：请运行 Actions 生成“按州模块”与本地库</h2>
+  <h2>第一次使用 v5.1：请在 <b>Actions</b> 运行 “Build POA modules (v5.1)”</h2>
   <ol>
-    <li>打开 <a href="https://github.com/inxtxx/whm-map-v5/actions" target="_blank" rel="noopener">Actions 页面</a> → 点击 <b>Build POA modules (v5)</b> → <b>Run workflow</b>。</li>
-    <li>完成后本仓库会出现：
-      <ul>
-        <li><code>data/modules/poa-NSW.mjs</code> … <code>poa-NT.mjs</code>（7 个州模块，已 gzip+Base64）</li>
-        <li><code>lib/leaflet.css</code>、<code>lib/leaflet.js</code>、<code>lib/pako.min.js</code>（本地库）</li>
-        <li><code>.nojekyll</code>（确保 Pages 原样输出静态文件）</li>
-      </ul>
-    </li>
+    <li>打开 <a href="https://github.com/inxtxx/whm-map-v5/actions" target="_blank" rel="noopener">Actions 页面</a> → 选择 <b>Build POA modules (v5.1)</b> → <b>Run workflow</b>。</li>
+    <li>完成后将生成：<code>data/modules/poa-*.json</code>（7个州），以及 <code>lib/leaflet.css/js</code>、<code>lib/pako.min.js</code>、<code>.nojekyll</code>。</li>
   </ol>
   <p>站点：<code>https://inxtxx.github.io/whm-map-v5/</code></p>
 </div>
 
 <script>
-/* ========== 1) 保障库文件加载（本地优先，失败回退 raw / unpkg） ========== */
-function chainLoadJS(sources, cb){ let i=0; (function next(){ if(i>=sources.length){ cb(false); return; }
-  const s=document.createElement('script'); s.src=sources[i++]; s.defer=true; s.onload=()=>cb(true); s.onerror=next; document.head.appendChild(s); })(); }
-function ensureLeaflet(cb){
-  chainLoadJS(['lib/leaflet.js',
-               'https://raw.githubusercontent.com/Leaflet/Leaflet/v1.9.4/dist/leaflet.js',
-               'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'], ok=>cb(ok));
-}
-function ensurePako(cb){
-  chainLoadJS(['lib/pako.min.js',
-               'https://raw.githubusercontent.com/nodeca/pako/v2.1.0/dist/pako.min.js',
-               'https://unpkg.com/pako@2.1.0/dist/pako.min.js'], ok=>cb(ok));
-}
-/* 如果本地 CSS 不存在，回退 raw/unpkg */
+// —— 保证 CSS 可用（本地优先，失败回退 raw/unpkg） —— 
 (function(){
   const el=document.getElementById('lf-css');
   const raw='https://raw.githubusercontent.com/Leaflet/Leaflet/v1.9.4/dist/leaflet.css';
   const cdn='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
   fetch(el.href,{method:'HEAD'}).catch(()=>{ el.href=raw; fetch(raw,{method:'HEAD'}).catch(()=>{ el.href=cdn; }); });
 })();
+function loadJS(srcs,cb){ let i=0; (function next(){ if(i>=srcs.length){cb(false);return;} const s=document.createElement('script'); s.src=srcs[i++]; s.defer=true; s.onload=()=>cb(true); s.onerror=next; document.head.appendChild(s); })(); }
+function ensureLeaflet(cb){ loadJS(['lib/leaflet.js','https://raw.githubusercontent.com/Leaflet/Leaflet/v1.9.4/dist/leaflet.js','https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'], cb); }
+function ensurePako(cb){ loadJS(['lib/pako.min.js','https://raw.githubusercontent.com/nodeca/pako/v2.1.0/dist/pako.min.js','https://unpkg.com/pako@2.1.0/dist/pako.min.js'], cb); }
 
-/* ========== 2) 462 规则/工具/样式（与前版一致，中文行业） ========== */
 const BADGE = t=>{ const b=document.getElementById('badge'); if(b) b.innerHTML=t; };
 const STATES = ['NSW','VIC','QLD','SA','WA','TAS','NT'];
 const blue5 = n => n<=0 ? '#eaf2ff' : n<=5 ? '#cfe1ff' : n<=20 ? '#9fc2ff' : n<=50 ? '#5b94ff' : '#1e6bff';
 const STYLE_INELIG = { fillColor:'#e4e6eb', color:'#ff4d4f', weight:1.2, dashArray:'6,4', fillOpacity:.35, opacity:.95 };
 let JOBS = { perPOA:{} };
 
-const RULES = {
-  tourismExtraPostcodes:["4406","4416","4498","7215"],
-  northern:{ ntAll:true, postcodes:[ "0872","6537","6642","6646","6701","6705","6707","6710","6711","6712","6713","6714","6716","6718",
-    "6720","6721","6722","6725","6726","6728","6740","6743","6751","6753","6754","6758","6760","6762","6765","6770",
-    "4472","4478","4481","4482","4680","4694","4695","4697","4699","4700","4701","4702","4703","4704","4705","4706","4707","4709","4710","4711","4712","4713","4714","4717",
-    "4720","4721","4722","4723","4724","4725","4726","4727","4728","4730","4731","4732","4733","4735","4736","4737","4738","4739","4740","4741","4742","4743","4744","4745","4746",
-    "4750","4751","4753","4754","4756","4757","4798","4799","4800","4801","4802","4803","4804","4805","4806","4807","4808","4809",
-    "4810","4811","4812","4814","4815","4816","4817","4818","4819","4820","4821","4822","4823","4824","4825","4828","4829","4830",
-    "4849","4850","4852","4854","4855","4856","4858","4859","4860","4861","4865","4868","4869","4870","4871","4872","4873","4874","4875","4876","4877","4878","4879","4880","4881","4882","4883","4884","4885","4886","4887","4888","4890","4891","4892","4895" ]},
-  regionalByState:{
-    NSW:["2311-2312","2328-2411","2420-2490","2536-2551","2575-2594","2618-2739","2787-2898"],
-    VIC:["3139","3211-3334","3340-3424","3430-3649","3658-3749","3753","3756","3758","3762","3764","3778-3781","3783","3797","3799","3810-3909","3921-3925","3945-3974","3979","3981-3996"],
-    QLD:["4124-4125","4133","4211","4270-4272","4275","4280","4285","4287","4307-4499","4510","4512","4515-4519","4522-4899"],
-    WA:["6041-6044","6055-6056","6069","6076","6083-6084","6111","6121-6126","6200-6799"],
-    SA:["ALL"],TAS:["ALL"],NT:["ALL"],NORFOLK:["ALL"]
-  },
-  remoteVRByState:{
-    NSW:["2356","2386-2387","2396","2405-2406","2672","2675","2717","2721","2726","2734-2735","2737-2739","2831","2836","2839-2842","2879","2898"],
-    QLD:["4472","4478","4481-4482","4694-4695","4697","4699-4707","4709-4714","4717","4720-4728","4730-4733","4735-4746","4750-4751","4753-4754","4756-4757","4798-4812","4814-4825","4828-4830","4849-4861","4865","4868-4888","4890-4892","4895"],
-    SA:["5220-5223","5302-5304","5440","5576-5577","5582-5583","5602-5607","5611","5630-5633","5640-5642","5650-5654","5658","5660-5661","5670","5680","5690"],
-    WA:["0872","6434","6442-6450","6468","6473-6479","6485-6490","6510","6513-6515","6517","6535-6537","6558-6562","6605-6606","6609-6611","6613","6615-6616","6620-6623","6625-6630","6635-6642","6646-6647","6701","6705","6707","6710-6714","6716","6718","6720-6722","6725-6726","6728","6740","6743","6751","6753-6754","6758","6760","6762","6765","6770"],
-    NT:["ALL"],TAS:[],VIC:[],ACT:[]
-  }
-};
+// —— 462 规则（中文） —— 
+const RULES={tourismExtraPostcodes:["4406","4416","4498","7215"],northern:{ntAll:true,postcodes:["0872","6537","6642","6646","6701","6705","6707","6710","6711","6712","6713","6714","6716","6718","6720","6721","6722","6725","6726","6728","6740","6743","6751","6753","6754","6758","6760","6762","6765","6770","4472","4478","4481","4482","4680","4694","4695","4697","4699","4700","4701","4702","4703","4704","4705","4706","4707","4709","4710","4711","4712","4713","4714","4717","4720","4721","4722","4723","4724","4725","4726","4727","4728","4730","4731","4732","4733","4735","4736","4737","4738","4739","4740","4741","4742","4743","4744","4745","4746","4750","4751","4753","4754","4756","4757","4798","4799","4800","4801","4802","4803","4804","4805","4806","4807","4808","4809","4810","4811","4812","4814","4815","4816","4817","4818","4819","4820","4821","4822","4823","4824","4825","4828","4829","4830","4849","4850","4852","4854","4855","4856","4858","4859","4860","4861","4865","4868","4869","4870","4871","4872","4873","4874","4875","4876","4877","4878","4879","4880","4881","4882","4883","4884","4885","4886","4887","4888","4890","4891","4892","4895"]},regionalByState:{NSW:["2311-2312","2328-2411","2420-2490","2536-2551","2575-2594","2618-2739","2787-2898"],VIC:["3139","3211-3334","3340-3424","3430-3649","3658-3749","3753","3756","3758","3762","3764","3778-3781","3783","3797","3799","3810-3909","3921-3925","3945-3974","3979","3981-3996"],QLD:["4124-4125","4133","4211","4270-4272","4275","4280","4285","4287","4307-4499","4510","4512","4515-4519","4522-4899"],WA:["6041-6044","6055-6056","6069","6076","6083-6084","6111","6121-6126","6200-6799"],SA:["ALL"],TAS:["ALL"],NT:["ALL"],NORFOLK:["ALL"]},remoteVRByState:{NSW:["2356","2386-2387","2396","2405-2406","2672","2675","2717","2721","2726","2734-2735","2737-2739","2831","2836","2839-2842","2879","2898"],QLD:["4472","4478","4481-4482","4694-4695","4697","4699-4707","4709-4714","4717","4720-4728","4730-4733","4735-4746","4750-4751","4753-4754","4756-4757","4798-4812","4814-4825","4828-4830","4849-4861","4865","4868-4888","4890-4892","4895"],SA:["5220-5223","5302-5304","5440","5576-5577","5582-5583","5602-5607","5611","5630-5633","5640-5642","5650-5654","5658","5660-5661","5670","5680","5690"],WA:["0872","6434","6442-6450","6468","6473-6479","6485-6490","6510","6513-6515","6517","6535-6537","6558-6562","6605-6606","6609-6611","6613","6615-6616","6620-6623","6625-6630","6635-6642","6646-6647","6701","6705","6707","6710-6714","6716","6718","6720-6722","6725-6726","6728","6740","6743","6751","6753-6754","6758","6760","6762","6765","6770"],NT:["ALL"],TAS:[],VIC:[],ACT:[]}};
 function inRanges(r,pc){ pc=String(pc||'').padStart(4,'0'); for(const s0 of (r||[])){ const s=String(s0).trim(); if(s==='ALL') return true; if(s.includes('-')){ const[a,b]=s.split('-').map(x=>parseInt(x,10)); const n=parseInt(pc,10); if(n>=a&&n<=b) return true; } else if(pc===s.padStart(4,'0')) return true; } return false; }
 function stateByPc(pc){ pc=String(pc||'').padStart(4,'0'); const p=pc[0]; if(p==='2')return'NSW'; if(p==='3')return'VIC'; if(p==='4')return'QLD'; if(p==='5')return'SA'; if(p==='6')return'WA'; if(p==='7')return'TAS'; if(p==='0'||p==='8'||p==='9')return'NT'; return'Other'; }
 function inRegional(pc){ const st=stateByPc(pc); const segs=(RULES.regionalByState[st]||[]); if(segs.includes('ALL')) return true; return inRanges(segs, pc); }
@@ -127,21 +88,21 @@ function inNorthern(pc){ const s=stateByPc(pc); if(s==='NT' && RULES.northern.nt
 function industriesZH(pc){ const t=[]; if(inNorthern(pc)||inRemoteVR(pc)) t.push('旅游与酒店业'); if(inNorthern(pc)||inRegional(pc)){ t.push('植物与动物栽培'); t.push('建筑业'); } if(inNorthern(pc)) t.push('渔业与珍珠养殖 / 林业种植与采伐'); return t; }
 const getPOAfromAnyProps = props => { const keys=['poa_code_2021','POA_CODE21','postcode','POA_CODE','code','id','name','poa_code','POA_CODE_2021']; for(const k of keys){ const v=props[k]; if(v||v===0){ const m=String(v).match(/\b(\d{4})\b/); if(m) return m[1]; } } for(const v of Object.values(props||{})){ const m=String(v).match(/\b(\d{4})\b/); if(m) return m[1]; } return null; };
 const getPOAName = props => props.poa_name_2021 || props.POA_NAME21 || props.name || ('邮编 '+getPOAfromAnyProps(props));
+const blueStyle = n => ({ fillColor:blue5(n), color:'#183a7a', weight:.6, fillOpacity:.72, opacity:.95 });
 const getCount = pc => (JOBS?.perPOA?.[pc]?.count)||0;
 const getItems = pc => (JOBS?.perPOA?.[pc]?.items)||[];
 
-/* ========== 3) 地图渲染与交互 ========== */
 function applyViewConstraints(map){
-  const AUS = L.latLngBounds(L.latLng(-44.5,110.0), L.latLng(-9.0,155.0));
+  const AUS=L.latLngBounds(L.latLng(-44.5,110.0), L.latLng(-9.0,155.0));
   const resize=()=>{ const size=map.getSize(); const padX=Math.round(size.x*0.20), padY=Math.round(size.y*0.20);
     const minZ=map.getBoundsZoom(AUS,true,{paddingTopLeft:[padX,padY],paddingBottomRight:[padX,padY]}); map.setMinZoom(minZ); if(map.getZoom()<minZ) map.setZoom(minZ); };
   map.setMaxBounds(AUS.pad(0.18)); map.options.maxBoundsViscosity=0.9; map.fitBounds(AUS,{padding:[50,50]}); resize(); map.on('resize', resize);
 }
-function blueStyle(n){ return { fillColor: blue5(n), color:'#183a7a', weight:.6, fillOpacity:.72, opacity:.95 }; }
 function bindPolygonUI(layer, props){
   const pc=getPOAfromAnyProps(props); if(!pc) return;
   const inds=industriesZH(pc);
-  if(!inds.length) layer.setStyle(STYLE_INELIG); else layer.setStyle(blueStyle(getCount(pc)));
+  if(!inds.length) layer.setStyle({ fillColor:'#e4e6eb', color:'#ff4d4f', weight:1.2, dashArray:'6,4', fillOpacity:.35, opacity:.95 });
+  else layer.setStyle(blueStyle(getCount(pc)));
   layer.on('mouseover', e=>{
     const html = `<div style="font-weight:700;margin-bottom:4px;">${getPOAName(props)}（邮编 ${pc}）</div>`
       + (inds.length? `可集签行业：${inds.map(i=>`<span class="pill">${i}</span>`).join(' ')}` : `<span style="color:#c0392b">不可集签（462）</span>`)
@@ -171,11 +132,10 @@ function bindPolygonUI(layer, props){
   });
 }
 
-/* ========== 4) 加载州模块（Base64+gz） ========== */
-async function loadStateModule(st, map){
+async function fetchJSON(url){ const r=await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error(r.status); return r.json(); }
+async function loadStateJSON(st, map){
   try{
-    const mod = await import(`./data/modules/poa-${st}.mjs?v=${Date.now()}`);
-    if(!window.pako){ throw new Error('pako missing'); }
+    const mod = await fetchJSON(`data/modules/poa-${st}.json?v=${Date.now()}`); // { b64: "..." }
     const bin = Uint8Array.from(atob(mod.b64), c=>c.charCodeAt(0));
     const text = pako.ungzip(bin, { to: 'string' });
     const geo = JSON.parse(text);
@@ -183,7 +143,7 @@ async function loadStateModule(st, map){
       smoothFactor:1.0,
       style:f=>{
         const pc=getPOAfromAnyProps(f.properties||{}), inds=industriesZH(pc);
-        if(!inds.length) return STYLE_INELIG;
+        if(!inds.length) return { fillColor:'#e4e6eb', color:'#ff4d4f', weight:1.2, dashArray:'6,4', fillOpacity:.35, opacity:.95 };
         return blueStyle(getCount(pc));
       },
       onEachFeature:(f,layer)=> bindPolygonUI(layer, f.properties||{})
@@ -192,25 +152,24 @@ async function loadStateModule(st, map){
   }catch(e){ return false; }
 }
 
-/* ========== 5) 主流程：保证库→渲染地图→逐州加载 ========== */
 function showHelp(){ const h=document.getElementById('help'); if(h) h.style.display='block'; }
-function startApp(){
+
+function start(){
   if(!window.L || !L.map){ BADGE('状态：Leaflet 未就绪（请运行 Actions 生成 lib/leaflet.js）'); showHelp(); return; }
   const map=L.map('map',{preferCanvas:true,zoomControl:true,worldCopyJump:false,scrollWheelZoom:true});
   applyViewConstraints(map);
   fetch('data/jobs-last10d.json',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(j=>{ if(j) JOBS=j; }).finally(async ()=>{
-    BADGE('状态：加载州模块 0/7 …');
+    BADGE('状态：加载州数据 0/7 …');
     let ok=0,fail=0;
-    for(const st of STATES){ const done = await loadStateModule(st, map); if(done){ ok++; BADGE(`状态：加载州模块 ${ok}/7`); } else { fail++; } }
-    if(ok===0){ BADGE('状态：未找到州模块（请在 Actions 运行 “Build POA modules (v5)”）'); showHelp(); }
-    else{ BADGE(`状态：已就绪 · 已加载 ${ok} 个州模块${fail?`（失败 ${fail} 个）`:''} · 最小缩放=60%`); }
+    for(const st of STATES){ const ok1=await loadStateJSON(st,map); if(ok1){ ok++; BADGE(`状态：加载州数据 ${ok}/7`);} else { fail++; } }
+    if(ok===0){ BADGE('状态：未找到州数据（请在 Actions 运行 Build POA modules (v5.1)）'); showHelp(); }
+    else{ BADGE(`状态：已就绪 · 已加载 ${ok} 个州${fail?`（失败 ${fail}）`:''} · 最小缩放=60%`); }
   });
 }
 
-/* 依次确保 Leaflet 和 pako */
 ensureLeaflet(ok=>{
   if(!ok){ BADGE('状态：Leaflet 加载失败（本地/raw/CDN 均不可用）'); showHelp(); return; }
-  ensurePako(ok2=>{ if(!ok2){ BADGE('状态：pako 加载失败（请运行 Actions 生成 lib/pako.min.js）'); showHelp(); } else { startApp(); } });
+  ensurePako(ok2=>{ if(!ok2){ BADGE('状态：pako 加载失败（请运行 Actions 生成 lib/pako.min.js）'); showHelp(); } else { start(); } });
 });
 </script>
 </body>
